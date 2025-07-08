@@ -7,11 +7,10 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 # Install audiowaveform
-RUN wget https://github.com/bbc/audiowaveform/releases/download/1.7.2/audiowaveform-1.7.2-linux64.tar.bz2 && \
-    tar xjf audiowaveform-1.7.2-linux64.tar.bz2 && \
-    mv audiowaveform-1.7.2-linux64/audiowaveform /usr/local/bin/audiowaveform && \
-    chmod +x /usr/local/bin/audiowaveform && \
-    rm -rf audiowaveform-1.7.2-linux64*
+RUN wget https://github.com/bbc/audiowaveform/releases/download/1.10.2/audiowaveform_1.10.2-1-12_amd64.deb && \
+    apt-get update && \
+    apt-get install -y ./audiowaveform_1.10.2-1-12_amd64.deb && \
+    rm audiowaveform_1.10.2-1-12_amd64.deb
 
 # Install Node.js via NodeSource
 RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
