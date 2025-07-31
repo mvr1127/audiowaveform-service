@@ -9,6 +9,117 @@ const { createClient } = require("@supabase/supabase-js");
 const app = express();
 app.use(express.json());
 
+// Initialize Supabase client
+const supabase = createClient(
+  process.env.PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
+
+/**
+ * Get a valid Dropbox access token for a user, refreshing if necessary
+ */
+async function getValidDropboxToken(userId) {
+  try {
+    console.log("🔍 Getting valid Dropbox token for user:", userId);
+
+    // First, try to get the current token
+    const { data: profile, error: fetchError } = await supabase
+      .from("profiles")
+      .select(
+        "dropbox_access_token, dropbox_refresh_token, dropbox_token_expires_at"
+      )
+      .eq("user_id", userId)
+      .single();
+
+    if (fetchError || !profile?.dropbox_access_token) {
+      console.error("❌ No access token found for user:", userId);
+      return { success: false, error: "No access token available" };
+    }
+
+    // Check if token is expired (with 5 minute buffer)
+    const now = new Date();
+    const expiresAt = new Date(profile.dropbox_token_expires_at);
+    const bufferTime = 5 * 60 * 1000; // 5 minutes in milliseconds
+
+    if (now.getTime() < expiresAt.getTime() - bufferTime) {
+      console.log("✅ Token is still valid for user:", userId);
+      return {
+        success: true,
+        accessToken: profile.dropbox_access_token,
+        refreshed: false,
+      };
+    }
+
+    // Token is expired, refresh it
+    console.log("🔄 Token expired, refreshing for user:", userId);
+
+    if (!profile.dropbox_refresh_token) {
+      console.error("❌ No refresh token found for user:", userId);
+      return { success: false, error: "No refresh token available" };
+    }
+
+    // Exchange refresh token for new access token
+    const response = await fetch("https://api.dropboxapi.com/2/oauth2/token", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: profile.dropbox_refresh_token,
+        client_id: process.env.VITE_DROPBOX_CLIENT_ID,
+        client_secret: process.env.VITE_DROPBOX_CLIENT_SECRET,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("❌ Token refresh failed:", errorText);
+      return {
+        success: false,
+        error: `Token refresh failed: ${response.status} - ${errorText}`,
+      };
+    }
+
+    const newTokens = await response.json();
+
+    // Calculate new expiration time (4 hours from now)
+    const newExpiresAt = new Date();
+    newExpiresAt.setHours(newExpiresAt.getHours() + 4);
+
+    // Update database with new access token and expiration
+    const { error: updateError } = await supabase
+      .from("profiles")
+      .update({
+        dropbox_access_token: newTokens.access_token,
+        dropbox_token_expires_at: newExpiresAt.toISOString(),
+      })
+      .eq("user_id", userId);
+
+    if (updateError) {
+      console.error(
+        "❌ Failed to update database with new token:",
+        updateError
+      );
+      return { success: false, error: "Failed to save new token to database" };
+    }
+
+    console.log("✅ Token refreshed successfully for user:", userId);
+
+    return {
+      success: true,
+      accessToken: newTokens.access_token,
+      refreshed: true,
+    };
+  } catch (error) {
+    console.error("❌ Error getting valid Dropbox token:", error);
+    return {
+      success: false,
+      error: error.message || "Unknown error",
+    };
+  }
+}
+
 app.post("/generate-waveform", async (req, res) => {
   let tempAudioPath = "";
   let tempJsonPath = "";
@@ -36,13 +147,40 @@ app.post("/generate-waveform", async (req, res) => {
 
     const { url, accessToken, referenceId } = req.body;
     if (!url) return res.status(400).json({ error: "Missing url" });
-    if (!accessToken)
-      return res.status(400).json({ error: "Missing accessToken" });
     if (!referenceId)
       return res.status(400).json({ error: "Missing referenceId" });
 
     console.log("Processing Dropbox URL:", url);
     console.log("Reference ID:", referenceId);
+
+    // Get the reference to find the user ID
+    const { data: reference, error: refError } = await supabase
+      .from("reference_items")
+      .select("user_id")
+      .eq("id", referenceId)
+      .single();
+
+    if (refError || !reference) {
+      console.error("❌ Reference not found:", refError);
+      return res.status(404).json({ error: "Reference not found" });
+    }
+
+    // Get a valid Dropbox access token (refresh if necessary)
+    const tokenResult = await getValidDropboxToken(reference.user_id);
+    if (!tokenResult.success) {
+      console.error("❌ Failed to get valid Dropbox token:", tokenResult.error);
+      return res.status(401).json({
+        error: "Dropbox authentication failed",
+        details: tokenResult.error,
+      });
+    }
+
+    const validAccessToken = tokenResult.accessToken;
+    console.log(
+      "🔑 Using Dropbox access token:",
+      !!validAccessToken,
+      tokenResult.refreshed ? "(refreshed)" : "(existing)"
+    );
 
     // 1. Download the audio file from Dropbox using the API
     let dropboxRes;
@@ -54,7 +192,7 @@ app.post("/generate-waveform", async (req, res) => {
         {
           method: "POST",
           headers: {
-            Authorization: `Bearer ${accessToken}`,
+            Authorization: `Bearer ${validAccessToken}`,
             "Dropbox-API-Arg": JSON.stringify({ url: url }),
           },
         }
@@ -67,7 +205,7 @@ app.post("/generate-waveform", async (req, res) => {
         {
           method: "POST",
           headers: {
-            Authorization: `Bearer ${accessToken}`,
+            Authorization: `Bearer ${validAccessToken}`,
             "Dropbox-API-Arg": JSON.stringify({ path: url }),
           },
         }
@@ -253,6 +391,12 @@ app.get("/health", (req, res) => {
       SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY
         ? "Set"
         : "Missing",
+      VITE_DROPBOX_CLIENT_ID: process.env.VITE_DROPBOX_CLIENT_ID
+        ? "Set"
+        : "Missing",
+      VITE_DROPBOX_CLIENT_SECRET: process.env.VITE_DROPBOX_CLIENT_SECRET
+        ? "Set"
+        : "Missing",
     },
   });
 });
@@ -269,5 +413,13 @@ app.listen(PORT, () => {
   console.log(
     "- SUPABASE_SERVICE_ROLE_KEY:",
     process.env.SUPABASE_SERVICE_ROLE_KEY ? "Set" : "Missing"
+  );
+  console.log(
+    "- VITE_DROPBOX_CLIENT_ID:",
+    process.env.VITE_DROPBOX_CLIENT_ID ? "Set" : "Missing"
+  );
+  console.log(
+    "- VITE_DROPBOX_CLIENT_SECRET:",
+    process.env.VITE_DROPBOX_CLIENT_SECRET ? "Set" : "Missing"
   );
 });
