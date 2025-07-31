@@ -9,17 +9,28 @@ const { createClient } = require("@supabase/supabase-js");
 const app = express();
 app.use(express.json());
 
-// Initialize Supabase client
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-);
-
 app.post("/generate-waveform", async (req, res) => {
   let tempAudioPath = "";
   let tempJsonPath = "";
 
   try {
+    // Initialize Supabase client inside the handler to avoid build-time issues
+    const supabaseUrl = process.env.SUPABASE_URL;
+    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+    if (!supabaseUrl || !supabaseServiceKey) {
+      console.error("Missing Supabase environment variables:", {
+        SUPABASE_URL: !!supabaseUrl,
+        SUPABASE_SERVICE_ROLE_KEY: !!supabaseServiceKey,
+      });
+      return res.status(500).json({
+        error: "Missing Supabase configuration",
+        details: "SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set",
+      });
+    }
+
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
     const { url, accessToken, referenceId } = req.body;
     if (!url) return res.status(400).json({ error: "Missing url" });
     if (!accessToken)
@@ -209,7 +220,16 @@ app.post("/generate-waveform", async (req, res) => {
 
 // Health check endpoint
 app.get("/health", (req, res) => {
-  res.json({ status: "ok", timestamp: new Date().toISOString() });
+  res.json({
+    status: "ok",
+    timestamp: new Date().toISOString(),
+    environment: {
+      SUPABASE_URL: process.env.SUPABASE_URL ? "Set" : "Missing",
+      SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY
+        ? "Set"
+        : "Missing",
+    },
+  });
 });
 
 const PORT = process.env.PORT || 3000;
