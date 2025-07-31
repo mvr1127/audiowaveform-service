@@ -1,13 +1,24 @@
 {
   "name": "audiowaveform-service",
   "version": "1.0.0",
+  "description": "Railway service for generating audio waveforms using audiowaveform CLI",
   "main": "index.js",
-  "type": "commonjs",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "dev": "nodemon index.js"
   },
   "dependencies": {
     "express": "^4.18.2",
-    "node-fetch": "^2.6.7"
-  }
+    "node-fetch": "^2.7.0",
+    "@supabase/supabase-js": "^2.38.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": ["audio", "waveform", "audiowaveform", "railway", "dropbox"],
+  "author": "Your Name",
+  "license": "MIT"
 }
