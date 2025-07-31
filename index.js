@@ -15,17 +15,20 @@ app.post("/generate-waveform", async (req, res) => {
 
   try {
     // Initialize Supabase client inside the handler to avoid build-time issues
-    const supabaseUrl = process.env.SUPABASE_URL;
+    const supabaseUrl =
+      process.env.PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
     const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
     if (!supabaseUrl || !supabaseServiceKey) {
       console.error("Missing Supabase environment variables:", {
-        SUPABASE_URL: !!supabaseUrl,
+        PUBLIC_SUPABASE_URL: !!process.env.PUBLIC_SUPABASE_URL,
+        SUPABASE_URL: !!process.env.SUPABASE_URL,
         SUPABASE_SERVICE_ROLE_KEY: !!supabaseServiceKey,
       });
       return res.status(500).json({
         error: "Missing Supabase configuration",
-        details: "SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set",
+        details:
+          "PUBLIC_SUPABASE_URL (or SUPABASE_URL) and SUPABASE_SERVICE_ROLE_KEY must be set",
       });
     }
 
@@ -171,8 +174,6 @@ app.post("/generate-waveform", async (req, res) => {
       .from("reference_items")
       .update({
         waveform_peaks: waveform.samples,
-        waveform_duration: waveform.duration,
-        waveform_sample_rate: waveform.sample_rate,
       })
       .eq("id", referenceId);
 
@@ -224,6 +225,7 @@ app.get("/health", (req, res) => {
     status: "ok",
     timestamp: new Date().toISOString(),
     environment: {
+      PUBLIC_SUPABASE_URL: process.env.PUBLIC_SUPABASE_URL ? "Set" : "Missing",
       SUPABASE_URL: process.env.SUPABASE_URL ? "Set" : "Missing",
       SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY
         ? "Set"
@@ -236,6 +238,10 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Waveform service running on port ${PORT}`);
   console.log("Environment variables:");
+  console.log(
+    "- PUBLIC_SUPABASE_URL:",
+    process.env.PUBLIC_SUPABASE_URL ? "Set" : "Missing"
+  );
   console.log("- SUPABASE_URL:", process.env.SUPABASE_URL ? "Set" : "Missing");
   console.log(
     "- SUPABASE_SERVICE_ROLE_KEY:",
