@@ -153,38 +153,69 @@ app.post("/generate-waveform", async (req, res) => {
     console.log("Processing Dropbox URL:", url);
     console.log("Reference ID:", referenceId);
 
-    // Get the reference to find the user ID
-    const { data: reference, error: refError } = await supabase
-      .from("reference_items")
-      .select("user_id")
-      .eq("id", referenceId)
-      .single();
+    let userId = null;
+    let validAccessToken = null;
 
-    if (refError || !reference) {
-      console.error("❌ Reference not found:", refError);
-      return res.status(404).json({ error: "Reference not found" });
+    // Handle preview requests differently
+    if (referenceId === "preview") {
+      console.log("🎵 Preview request detected - using shared link access");
+
+      // For preview, we'll try to access the file as a public shared link
+      // This doesn't require user authentication
+      validAccessToken = null; // We'll use public access
+    } else {
+      // Get the reference to find the user ID
+      const { data: reference, error: refError } = await supabase
+        .from("reference_items")
+        .select("user_id")
+        .eq("id", referenceId)
+        .single();
+
+      if (refError || !reference) {
+        console.error("❌ Reference not found:", refError);
+        return res.status(404).json({ error: "Reference not found" });
+      }
+
+      userId = reference.user_id;
+
+      // Get a valid Dropbox access token (refresh if necessary)
+      const tokenResult = await getValidDropboxToken(userId);
+      if (!tokenResult.success) {
+        console.error(
+          "❌ Failed to get valid Dropbox token:",
+          tokenResult.error
+        );
+        return res.status(401).json({
+          error: "Dropbox authentication failed",
+          details: tokenResult.error,
+        });
+      }
+
+      validAccessToken = tokenResult.accessToken;
+      console.log(
+        "🔑 Using Dropbox access token:",
+        !!validAccessToken,
+        tokenResult.refreshed ? "(refreshed)" : "(existing)"
+      );
     }
-
-    // Get a valid Dropbox access token (refresh if necessary)
-    const tokenResult = await getValidDropboxToken(reference.user_id);
-    if (!tokenResult.success) {
-      console.error("❌ Failed to get valid Dropbox token:", tokenResult.error);
-      return res.status(401).json({
-        error: "Dropbox authentication failed",
-        details: tokenResult.error,
-      });
-    }
-
-    const validAccessToken = tokenResult.accessToken;
-    console.log(
-      "🔑 Using Dropbox access token:",
-      !!validAccessToken,
-      tokenResult.refreshed ? "(refreshed)" : "(existing)"
-    );
 
     // 1. Download the audio file from Dropbox using the API
     let dropboxRes;
-    if (url.startsWith("http://") || url.startsWith("https://")) {
+    if (referenceId === "preview") {
+      // For preview, try to download directly from the shared link
+      console.log("🎵 Preview mode - downloading directly from shared link");
+
+      // Convert Dropbox shared link to direct download link
+      const directUrl = url.replace(
+        "www.dropbox.com",
+        "dl.dropboxusercontent.com"
+      );
+      console.log("Direct download URL:", directUrl);
+
+      dropboxRes = await fetch(directUrl, {
+        method: "GET",
+      });
+    } else if (url.startsWith("http://") || url.startsWith("https://")) {
       // Shared link - use get_shared_link_file
       console.log("Using shared link download method");
       dropboxRes = await fetch(
@@ -221,14 +252,31 @@ app.post("/generate-waveform", async (req, res) => {
 
     // 2. Extract filename and extension from Dropbox API response
     let filename = "audio.mp3"; // default fallback
-    const apiResultHeader = dropboxRes.headers.get("dropbox-api-result");
-    if (apiResultHeader) {
+
+    if (referenceId === "preview") {
+      // For preview, extract filename from URL
       try {
-        const apiResult = JSON.parse(apiResultHeader);
-        filename = apiResult.name || filename;
-        console.log("Extracted filename from Dropbox API:", filename);
+        const urlParts = url.split("/");
+        const lastPart = urlParts[urlParts.length - 1];
+        const filenameFromUrl = lastPart.split("?")[0]; // Remove query params
+        if (filenameFromUrl && filenameFromUrl.includes(".")) {
+          filename = filenameFromUrl;
+          console.log("Extracted filename from URL:", filename);
+        }
       } catch (e) {
-        console.warn("Failed to parse dropbox-api-result header:", e);
+        console.warn("Failed to extract filename from URL:", e);
+      }
+    } else {
+      // Use Dropbox API response headers
+      const apiResultHeader = dropboxRes.headers.get("dropbox-api-result");
+      if (apiResultHeader) {
+        try {
+          const apiResult = JSON.parse(apiResultHeader);
+          filename = apiResult.name || filename;
+          console.log("Extracted filename from Dropbox API:", filename);
+        } catch (e) {
+          console.warn("Failed to parse dropbox-api-result header:", e);
+        }
       }
     }
 
