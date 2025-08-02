@@ -374,37 +374,52 @@ app.post("/generate-waveform", async (req, res) => {
       });
     }
 
-    // 7. Save peaks to Supabase
-    console.log("Saving peaks to Supabase for reference:", referenceId);
-    const { error: updateError } = await supabase
-      .from("reference_items")
-      .update({
-        waveform_peaks: waveform.data,
-      })
-      .eq("id", referenceId);
+    // 7. Save peaks to Supabase (skip for preview requests)
+    if (referenceId !== "preview") {
+      console.log("Saving peaks to Supabase for reference:", referenceId);
+      const { error: updateError } = await supabase
+        .from("reference_items")
+        .update({
+          waveform_peaks: waveform.data,
+        })
+        .eq("id", referenceId);
 
-    if (updateError) {
-      console.error("Error saving peaks to Supabase:", updateError);
-      return res.status(500).json({
-        error: "Failed to save peaks to database",
-        details: updateError.message,
-      });
+      if (updateError) {
+        console.error("Error saving peaks to Supabase:", updateError);
+        return res.status(500).json({
+          error: "Failed to save peaks to database",
+          details: updateError.message,
+        });
+      }
+
+      console.log("Successfully saved peaks to Supabase");
+    } else {
+      console.log("🎵 Preview mode - skipping database save");
     }
 
-    console.log("Successfully saved peaks to Supabase");
-
     // 8. Return the peaks data
-    res.json({
-      peaks: waveform.data,
-      version: waveform.version,
-      channels: waveform.channels,
-      sampleRate: waveform.sample_rate,
-      samplesPerPixel: waveform.samples_per_pixel,
-      bits: waveform.bits,
-      length: waveform.length,
-      numPeaks: waveform.data.length,
-      saved: true,
-    });
+    const responseData = {
+      waveform: {
+        data: waveform.data,
+        version: waveform.version,
+        channels: waveform.channels,
+        sampleRate: waveform.sample_rate,
+        samplesPerPixel: waveform.samples_per_pixel,
+        bits: waveform.bits,
+        length: waveform.length,
+        numPeaks: waveform.data.length,
+      },
+      saved: referenceId !== "preview",
+    };
+
+    console.log(
+      "✅ Waveform generated successfully:",
+      waveform.data.length,
+      "peaks",
+      referenceId === "preview" ? "(preview mode)" : ""
+    );
+
+    res.json(responseData);
   } catch (err) {
     console.error("Waveform error:", err);
     res.status(500).json({
