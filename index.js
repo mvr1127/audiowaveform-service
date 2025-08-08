@@ -321,7 +321,7 @@ app.post("/generate-waveform", async (req, res) => {
         "--split-channels",
       ];
 
-      console.log("audiowaveform args:", args);
+     
       const proc = spawn("audiowaveform", args);
 
       let stderr = "";
