@@ -202,19 +202,75 @@ app.post("/generate-waveform", async (req, res) => {
     // 1. Download the audio file from Dropbox using the API
     let dropboxRes;
     if (referenceId === "preview") {
-      // For preview, try to download directly from the shared link
-      console.log("🎵 Preview mode - downloading directly from shared link");
+      // For preview, we need to handle different URL formats
+      console.log("🎵 Preview mode - analyzing URL format");
+      
+      try {
+        const urlObj = new URL(url);
+        console.log("🔍 URL analysis:", {
+          pathname: urlObj.pathname,
+          hasPreview: urlObj.searchParams.has("preview"),
+          previewParam: urlObj.searchParams.get("preview")
+        });
+        
+        // Check if this is a folder link with preview parameter
+        if ((urlObj.pathname.startsWith("/scl/fo/") || urlObj.pathname.startsWith("/work/")) && urlObj.searchParams.has("preview")) {
+          console.log("📁 Detected folder link with preview parameter - using Dropbox API");
+          
+          // For folder links with preview, we need to use the Dropbox API
+          // Try to use the shared link API without authentication first
+          dropboxRes = await fetch(
+            "https://content.dropboxapi.com/2/sharing/get_shared_link_file",
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "Dropbox-API-Arg": JSON.stringify({ url: url }),
+              },
+            }
+          );
+          
+          // If that fails, we might need to construct a direct link differently
+          if (!dropboxRes.ok) {
+            console.log("⚠️ Shared link API failed, trying alternative approach");
+            const errorText = await dropboxRes.text();
+            console.log("API Error:", errorText);
+            
+            // For /scl/fo/ links, try to construct a direct download URL
+            // This is a fallback approach that might work for some shared folder links
+            const directUrl = url.replace("?dl=0", "?dl=1").replace("&dl=0", "&dl=1");
+            console.log("🔄 Trying direct download URL:", directUrl);
+            
+            dropboxRes = await fetch(directUrl, {
+              method: "GET",
+            });
+          }
+        } else {
+          // Standard shared link - try the dl.dropboxusercontent.com approach
+          console.log("🔗 Standard shared link - using direct download");
+          const directUrl = url.replace(
+            "www.dropbox.com",
+            "dl.dropboxusercontent.com"
+          );
+          console.log("Direct download URL:", directUrl);
 
-      // Convert Dropbox shared link to direct download link
-      const directUrl = url.replace(
-        "www.dropbox.com",
-        "dl.dropboxusercontent.com"
-      );
-      console.log("Direct download URL:", directUrl);
+          dropboxRes = await fetch(directUrl, {
+            method: "GET",
+          });
+        }
+      } catch (parseError) {
+        console.error("❌ URL parsing failed:", parseError);
+        // Fallback to original behavior
+        const directUrl = url.replace(
+          "www.dropbox.com",
+          "dl.dropboxusercontent.com"
+        );
+        console.log("🔄 Fallback to direct download URL:", directUrl);
 
-      dropboxRes = await fetch(directUrl, {
-        method: "GET",
-      });
+        dropboxRes = await fetch(directUrl, {
+          method: "GET",
+        });
+      }
     } else if (url.startsWith("http://") || url.startsWith("https://")) {
       // Shared link - use get_shared_link_file
       console.log("Using shared link download method");
@@ -256,12 +312,25 @@ app.post("/generate-waveform", async (req, res) => {
     if (referenceId === "preview") {
       // For preview, extract filename from URL
       try {
-        const urlParts = url.split("/");
-        const lastPart = urlParts[urlParts.length - 1];
-        const filenameFromUrl = lastPart.split("?")[0]; // Remove query params
-        if (filenameFromUrl && filenameFromUrl.includes(".")) {
-          filename = filenameFromUrl;
-          console.log("Extracted filename from URL:", filename);
+        const urlObj = new URL(url);
+        
+        // Check if this is a folder link with preview parameter
+        if ((urlObj.pathname.startsWith("/scl/fo/") || urlObj.pathname.startsWith("/work/")) && urlObj.searchParams.has("preview")) {
+          // Extract filename from preview parameter
+          const previewFile = urlObj.searchParams.get("preview");
+          if (previewFile) {
+            filename = decodeURIComponent(previewFile.replace(/\+/g, ' '));
+            console.log("Extracted filename from preview parameter:", filename);
+          }
+        } else {
+          // Standard URL - extract from pathname
+          const urlParts = url.split("/");
+          const lastPart = urlParts[urlParts.length - 1];
+          const filenameFromUrl = lastPart.split("?")[0]; // Remove query params
+          if (filenameFromUrl && filenameFromUrl.includes(".")) {
+            filename = filenameFromUrl;
+            console.log("Extracted filename from URL:", filename);
+          }
         }
       } catch (e) {
         console.warn("Failed to extract filename from URL:", e);
@@ -321,7 +390,7 @@ app.post("/generate-waveform", async (req, res) => {
         "--split-channels",
       ];
 
-     
+      console.log("audiowaveform args:", args);
       const proc = spawn("audiowaveform", args);
 
       let stderr = "";
